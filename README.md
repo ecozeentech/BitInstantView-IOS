@@ -116,6 +116,57 @@ flutter devices                 # confirm it is detected
 flutter run -d <simulator-id>
 ```
 
+## Getting a build to test, without owning a Mac
+
+This repository's own authoring environment is Linux with no Xcode, so no
+`.ipa` or signed app can be produced here — that is an Apple platform
+restriction, not a missing feature. **`.github/workflows/ios-build.yml`**
+runs on every push to `main` using GitHub's hosted macOS runners (where
+Xcode *is* available) and does the following, for real:
+
+1. `flutter analyze`, `dart format --set-exit-if-changed`, `flutter test`
+2. `flutter build ios --debug --simulator` — a genuine, working build for
+   the **iOS Simulator**, zipped and uploaded as a workflow artifact
+3. `flutter build ios --release --no-codesign` — a device-architecture
+   build with no signing, as a release-pipeline sanity check (not
+   uploaded, since an unsigned `.app` cannot be installed anywhere)
+
+### To test the Simulator build
+
+1. Open the [latest successful run](../../actions/workflows/ios-build.yml)
+   of this workflow and download the `BitInstantView-ios-simulator`
+   artifact (requires being signed in to GitHub).
+2. On a Mac, unzip it and run:
+   ```bash
+   open -a Simulator
+   xcrun simctl install booted Runner.app
+   xcrun simctl launch booted com.bitinstantview.app
+   ```
+
+### To test on a real, physical iPhone/iPad
+
+Apple requires every app installed on physical hardware to be
+cryptographically signed with an Apple Developer certificate — there is no
+way around this, by GitHub Actions, by this repository, or by any tool.
+You have two real options:
+
+- **Fastest (free, no CI changes needed):** on a Mac with Xcode installed,
+  open `ios/Runner.xcworkspace`, sign in with your own Apple ID under
+  *Signing & Capabilities* (free "Personal Team" signing works for
+  installs that self-expire after 7 days), connect your iPhone/iPad over
+  USB or Wi-Fi, select it as the run destination, and press **Run**. No
+  App Store Connect account or paid membership is required for this.
+- **Distributable build (ad hoc or TestFlight):** requires a paid Apple
+  Developer Program membership, a real registered bundle identifier (see
+  [Bundle identifier](#bundle-identifier) below), a distribution
+  certificate + provisioning profile (or App Store Connect API key +
+  Fastlane `match`), and the target devices' UDIDs registered for ad hoc.
+  None of this exists in this repository because it requires credentials
+  only the app owner's Apple Developer account can provide. Once you have
+  them, add them as GitHub Actions secrets and extend
+  `.github/workflows/ios-build.yml` with a signed `flutter build ipa`
+  step — ask and this can be wired up.
+
 ## Bundle identifier
 
 No Apple Developer Program registration could be verified from this

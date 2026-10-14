@@ -1,0 +1,64 @@
+name: iOS Build & Test
+
+# This project is normally developed on a Linux host with no Xcode, so the
+# full iOS toolchain (codesigning, device/simulator builds) can only be
+# exercised here, on GitHub's hosted macOS runners. This workflow is the
+# source of truth for "does this actually build for iOS" - do not treat a
+# green run on a Linux dev machine as proof of an iOS build.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch: {}
+
+jobs:
+  build:
+    name: Analyze, test, and build iOS
+    runs-on: macos-14
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: "3.47.7"
+          channel: "stable"
+
+      - name: flutter pub get
+        run: flutter pub get
+
+      - name: dart format (check only)
+        run: dart format --output=none --set-exit-if-changed lib test
+
+      - name: flutter analyze
+        run: flutter analyze
+
+      - name: flutter test
+        run: flutter test
+
+      - name: Build unsigned iOS Simulator app
+        run: flutter build ios --debug --simulator --no-tree-shake-icons
+
+      - name: Package Simulator .app for download
+        run: |
+          cd build/ios/iphonesimulator
+          zip -r BitInstantView-simulator.app.zip Runner.app
+
+      - name: Upload Simulator build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: BitInstantView-ios-simulator
+          path: build/ios/iphonesimulator/BitInstantView-simulator.app.zip
+          retention-days: 30
+
+      - name: Build unsigned iOS device archive (toolchain sanity check only)
+        run: flutter build ios --release --no-codesign
+        # This produces an UNSIGNED build/ios/iphoneos/Runner.app. It proves
+        # the release build pipeline works, but Apple's platform security
+        # model means an unsigned .app can never be installed on a physical
+        # device - that step always requires a real Apple ID / Developer
+        # Program certificate, which must be supplied by the app owner (see
+        # docs/APP_STORE_READINESS.md and README.md "Testing on a physical
+        # iOS device"). It is intentionally not uploaded as an artifact.
