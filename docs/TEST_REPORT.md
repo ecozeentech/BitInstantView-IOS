@@ -150,7 +150,8 @@ above if needed.
 
 ## 7. iOS build — `flutter build ios` / `flutter build ios --no-codesign`
 
-**Status: Blocked by environment — not a code failure.**
+**Status on this Linux authoring host: Blocked by environment — not a
+code failure.**
 
 ```
 $ flutter build ios --no-codesign
@@ -168,8 +169,8 @@ Available subcommands:
 this Linux host — Flutter only registers the iOS build toolchain when run
 on macOS with Xcode installed, which this environment does not have and
 cannot have (Apple's toolchain is macOS-only). This is a hard environment
-limitation, not a defect in this project's code. What **was** verified in
-lieu of an actual compile:
+limitation, not a defect in this project's code. What **was** verified
+here, in lieu of an actual compile:
 
 - `flutter analyze` type-checks every line of `lib/` against the real
   `webview_flutter` 4.14.1 / `webview_flutter_wkwebview` 3.27.0 API surface
@@ -189,9 +190,54 @@ lieu of an actual compile:
   `url_launcher_ios` ship a `Package.swift` (confirmed on disk in the pub
   cache), so Swift Package Manager — this Flutter version's default — can
   resolve them with no `Podfile` needed.
-- **Not verified, requires macOS + Xcode:** an actual `xcodebuild`
-  invocation, code signing, and running on a Simulator or device. This is
-  recorded here as **blocked**, not claimed as passed.
+
+### 7a. Real iOS build, verified on GitHub Actions (macOS/Xcode)
+
+Because an actual `xcodebuild` invocation genuinely cannot run on this
+host, `.github/workflows/ios-build.yml` was added to run the full pipeline
+on GitHub's hosted macOS runners, which do have Xcode. This is **real,
+independently verifiable evidence**, not a claim — see the run logs at
+<https://github.com/ecozeentech/BitInstantView-IOS/actions/workflows/ios-build.yml>.
+
+**First run** (commit `6632c2d`, `macos-14`) **failed**, and caught a real
+bug that this Linux host could never have caught:
+
+```
+Swift Compiler Error (Xcode): Value of type 'NWPath' has no member 'isUltraConstrained'
+/…/connectivity_plus-7.3.2/ios/.../PathMonitorConnectivityProvider.swift:28:39
+```
+
+`connectivity_plus` 7.3.2's own iOS source references `NWPath.isUltraConstrained`
+inside an `if #available(iOS 26.0, *)` guard — a Swift availability check
+is a *runtime* branch, but the symbol must still exist in the SDK the code
+is *compiled* against, and `macos-14`'s default Xcode predates the iOS 26
+SDK. This was **not** worked around by patching application code; the fix
+was to the CI environment itself (switch to `macos-15` and explicitly
+select `latest-stable` Xcode via `maxim-lobanov/setup-xcode@v1`), since the
+plugin code and its availability guard are both correct for a sufficiently
+new toolchain.
+
+**Second run** (commit `84ae7df`, `macos-15` + latest-stable Xcode) —
+**passed completely, in ~5 minutes:**
+
+| Step | Result |
+|---|---|
+| `xcodebuild -version` / SDK check | Logged for traceability |
+| `flutter pub get` | Passed |
+| `dart format --set-exit-if-changed` | Passed |
+| `flutter analyze` | Passed |
+| `flutter test` | Passed (same 70/70 as the Linux run, confirming parity) |
+| `flutter build ios --debug --simulator` | **Passed — real Xcode build, zero errors** |
+| Package + upload Simulator `.app` artifact | Passed — downloadable from the run page for 30 days |
+| `flutter build ios --release --no-codesign` | **Passed — real Xcode release build, zero errors** |
+
+This is the first point in this project's history where an actual
+`xcodebuild` compile of this app has been confirmed to succeed. It is
+**not** equivalent to codesigning, App Store submission, or installing on
+a physical device (see README.md "Getting a build to test, without owning
+a Mac" and §10 below) — but it is real, reproducible evidence that the
+Dart/Flutter code, the generated Xcode project, the asset catalog, and
+every plugin dependency actually compile for iOS.
 
 ## 8. App icon asset verification
 
@@ -239,19 +285,29 @@ HTML/headers.
 
 ## 10. Simulator / device testing
 
-**Status: Not run — blocked by environment** (no macOS/Xcode/iOS Simulator
-runtime available on this Linux build host). None of the Responsive Device
-Test Matrix scenarios in the original brief (Dynamic Island safe areas,
+**Status: build-level verification passed on CI (§7a); actual on-screen
+behavior still not run — blocked by environment.**
+
+GitHub Actions CI (macOS/Xcode) confirms the app **compiles** into a real
+`Runner.app` targeting the iOS Simulator architecture (§7a), and that
+`.app` can be downloaded and installed into a Simulator with
+`xcrun simctl install` by anyone with a Mac (see README.md). That is a
+genuine, higher bar than "blocked" — but it is still not the same as
+*launching* the app and visually confirming its behavior, because no agent
+in this conversation has a macOS GUI to open Simulator.app, tap through
+the UI, and observe the result. None of the Responsive Device Test Matrix
+scenarios in the original brief (Dynamic Island safe areas,
 split-screen/multitasking, rotation, keyboard-open layout, slow-connection
-feedback, app-background/resume, Dynamic Type) have been exercised on a
-simulator or device. All of them were addressed at the code level with
-standard, well-documented Flutter/iOS APIs (`SafeArea`, `PopScope`,
+feedback, app-background/resume, Dynamic Type) have been visually
+exercised. All of them were addressed at the code level with standard,
+well-documented Flutter/iOS APIs (`SafeArea`, `PopScope`,
 `WidgetsBindingObserver.didChangeAppLifecycleState`,
 `setAllowsBackForwardNavigationGestures`, system `ThemeMode`, and no
-hardcoded orientation lock), but **the actual on-device behavior has not
-been visually confirmed and must be before shipping.** This is listed here
-as the single most important remaining verification step for whoever
-continues this work on a macOS machine.
+hardcoded orientation lock), but **the actual on-device/on-simulator
+behavior has not been visually confirmed and must be before shipping.**
+This remains the single most important remaining verification step —
+install the CI's Simulator artifact (or run `flutter run` on a Mac) and
+watch it work.
 
 ## Summary
 
@@ -263,7 +319,9 @@ continues this work on a macOS machine.
 | `flutter analyze` | Passed — 0 issues |
 | `flutter test` | Passed — 70/70 |
 | `flutter test --coverage` | Passed |
-| `flutter build ios` | Blocked by environment (Linux host, no Xcode) |
+| `flutter build ios` (this Linux host) | Blocked by environment (no Xcode) |
+| `flutter build ios --debug --simulator` (GitHub Actions macOS CI) | **Passed** — real Xcode build, see §7a |
+| `flutter build ios --release --no-codesign` (GitHub Actions macOS CI) | **Passed** — real Xcode build, see §7a |
 | App icon asset dimensions/alpha | Passed (verified with Pillow) |
 | Live website route checks | Passed (via `curl`) |
-| Simulator/device testing | Not run — blocked by environment |
+| Simulator/device on-screen testing | Not run — no macOS GUI available in this conversation |
